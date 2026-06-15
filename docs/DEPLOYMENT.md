@@ -1,0 +1,344 @@
+# Deployment Guide — RINL Vizag Steel Delay Analysis System
+
+TanStack Start (React 19 + Vite 8) app with a PostgreSQL/Supabase backend.
+No platform lock-in — deploy to Vercel, Render, or any Node.js host.
+
+---
+
+## 1. Prerequisites
+
+- **Node.js 20+** (or **Bun 1.2+**)
+- A **Supabase** project (free tier works) or any PostgreSQL 15+ database
+- A **GitHub** account (for CI/CD)
+- npm (ships with Node.js) / bun
+
+---
+
+## 2. Environment Variables
+
+| Variable | Where used | Client-safe? |
+|---|---|---|
+| `VITE_SUPABASE_URL` | Browser-side Supabase client | **Yes** (VITE_ prefix) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser-side Supabase client | **Yes** (VITE_ prefix) |
+| `VITE_SUPABASE_PROJECT_ID` | Meta / og tags (optional) | **Yes** |
+| `SUPABASE_URL` | Server-side Supabase admin client | **No** |
+| `SUPABASE_PUBLISHABLE_KEY` | Server-side auth middleware | **No** |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-side admin operations | **No — SECRET** (bypasses RLS) |
+| `SEED_SECRET` | Seed endpoint authentication | **No — SECRET** |
+| `NITRO_PRESET` | Nitro SSR preset (see §5) | **Build-time only** |
+| `SITE_URL` | Public site URL (sitemap.xml, social meta) | **Yes** |
+
+### `.env.example`
+
+Copy `.env.example` to `.env` and fill in values from your Supabase project:
+
+```env
+# ── Client-safe ──────────────────────────────────────────────
+VITE_SUPABASE_URL="https://<project-ref>.supabase.co"
+VITE_SUPABASE_PUBLISHABLE_KEY="<anon-key>"
+VITE_SUPABASE_PROJECT_ID="<project-ref>"
+
+# ── Server-only ─────────────────────────────────────────────
+SUPABASE_URL="https://<project-ref>.supabase.co"
+SUPABASE_PUBLISHABLE_KEY="<anon-key>"
+SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+SEED_SECRET="<your-seed-secret>"
+```
+
+**Key locations in Supabase Dashboard:**
+- Project URL / anon key → **Project Settings → API → Project URL / anon public**
+- Service role key → **Project Settings → API → service_role secret**
+- Project ref → the `https://<ref>.supabase.co` segment
+
+---
+
+## 3. Local Setup (Windows / macOS / Linux)
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Create .env file (copy from .env.example, fill your Supabase project values)
+cp .env.example .env
+# Then edit .env with your real Supabase credentials
+
+# 3. Start dev server (hot-reloads on changes)
+npm run dev
+# → http://localhost:3000 (or next available port)
+
+# 4. Production build (SSR + static assets)
+npm run build
+
+# 5. Preview the production build locally
+npm run preview
+# → http://localhost:3000
+```
+
+> **Windows users**: Use `copy .env.example .env` instead of `cp`.
+
+---
+
+## 4. Database Setup
+
+### 4a. Run setup.sql
+
+In your Supabase project's **SQL Editor**, paste and run [`setup.sql`](../setup.sql).
+This single script creates everything idempotently:
+
+- `app_role` enum (`sys_admin`, `dept_admin`, `dept_user`, `ppm_admin`, `ppm_user`)
+- `profiles`, `user_roles`, `eqpt_master`, `delays_data` tables
+- All indexes for high-traffic queries
+- `has_role()` and `is_admin()` security-definer functions
+- Row-Level Security policies on every table
+- Grants for `authenticated` and `service_role`
+
+### 4b. Create the first admin user
+
+**Option A — App seed endpoint (recommended):**
+
+After deploying the app (or running locally), POST to the seed endpoint:
+
+```bash
+curl -X POST https://<your-app>/api/public/seed \
+  -H "Authorization: Bearer <YOUR_SEED_SECRET>"
+```
+
+This creates 5 demo accounts (see `src/routes/api/public/seed.ts`).
+
+**Option B — Supabase Dashboard:**
+
+1. **Authentication → Users → Invite user**
+   - Email: `admin@vizagsteel.internal`
+   - Auto-confirm: ON
+2. **SQL Editor** — after the user is created, run:
+   ```sql
+   INSERT INTO public.profiles (id, emp_no, emp_name, dept, designation, active)
+   VALUES ('<copy-user-id-from-auth>', 'ADMIN001', 'System Admin', 'PPM', 'Admin', true);
+
+   INSERT INTO public.user_roles (user_id, role)
+   VALUES ('<copy-user-id>', 'sys_admin');
+   ```
+
+**Option C — SQL seed script:**
+
+The file [`seed.sql`](../seed.sql) uses `pgcrypto` to create an admin directly in `auth.users`.
+
+---
+
+## 5. Deploy to Production
+
+### 5a. GitHub → Vercel
+
+| Setting | Value |
+|---|---|
+| Framework preset | **Vite** (auto-detected) |
+| Build command | `npm run build` |
+| Output directory | `dist/` (auto-detected) |
+| Node version | 20.x (default) |
+| NITRO_PRESET | (not needed — Vercel auto-detects) |
+
+**Environment variables** (add all under Settings → Environment Variables):
+
+```
+VITE_SUPABASE_URL
+VITE_SUPABASE_PUBLISHABLE_KEY
+VITE_SUPABASE_PROJECT_ID
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY
+SEED_SECRET
+```
+
+Do **not** set `NITRO_PRESET` — Vercel auto-detection works out of the box with Nitro.
+
+The `vercel.json` is auto-generated by Nitro during build.
+
+**Deep links / refresh**: SSR handles all routes. No SPA fallback config needed.
+
+### 5b. GitHub → Render (Web Service)
+
+| Setting | Value |
+|---|---|
+| Runtime | **Node** |
+| Build command | `npm install && npm run build` |
+| Start command | `npm run preview` |
+| Node version | 20 |
+| NITRO_PRESET | `node-server` |
+
+**Environment variables** (same list as Vercel above, plus `NITRO_PRESET=node-server`)
+
+> Render runs the Node.js server directly. The `NITRO_PRESET=node-server` ensures
+> the SSR server outputs a standard Node.js HTTP server.
+
+**Deep links / refresh**: The Express/Nitro server handles all routes. No 404s.
+
+### 5c. Custom Domain
+
+Both Vercel and Render support custom domains in their dashboard settings.
+Add your DNS CNAME / A record as instructed by the platform.
+
+---
+
+## 6. Authentication
+
+The app uses **Supabase Auth** which supports:
+
+| Method | Default? | Config |
+|---|---|---|
+| Email + Password | ✅ Yes | Built-in — works out of the box |
+| Employee No + Password* | ✅ Yes | Maps emp_no → auth email via `register.functions.ts` |
+| Google OAuth | ❌ Optional | Enable in Supabase Dashboard → Auth → Providers → Google |
+| Phone / SMS OTP | ❌ Optional | Enable in Supabase Dashboard → Auth → Providers → Phone (needs Twilio) |
+
+### Enable Google OAuth
+
+1. Supabase Dashboard → **Authentication → Providers → Google**
+2. Toggle **Enable**
+3. Create OAuth credentials at [Google Cloud Console](https://console.cloud.google.com)
+   - Authorized redirect URI: `https://<your-app>/auth/v1/callback`
+4. Paste **Client ID** and **Client Secret** into Supabase
+5. No code changes needed — `signInWithOAuth({ provider: 'google' })` already works
+
+### Enable Phone / SMS OTP
+
+1. Supabase Dashboard → **Authentication → Providers → Phone**
+2. Toggle **Enable**
+3. Select **Twilio** as provider
+4. Enter Twilio **Account SID**, **Auth Token**, and **From Number**
+5. The app can then call `supabase.auth.signInWithOtp({ phone })`
+
+### Redirect URLs for OAuth
+
+```
+Development: http://localhost:3000/auth/v1/callback
+Production:  https://<your-domain>/auth/v1/callback
+```
+
+---
+
+## 7. High-Traffic Readiness
+
+### Indexes
+
+All hot query paths are already indexed (see setup.sql):
+
+| Table | Index | Query Pattern |
+|---|---|---|
+| `delays_data` | `(delay_from DESC)` | Time-range dashboards |
+| `delays_data` | `(created_at DESC)` | Recent delays listing |
+| `delays_data` | `(shop_code)` | Shop-filtered queries |
+| `delays_data` | `(agency)` | Agency breakdown |
+| `delays_data` | `(user_entered)` | User activity logs |
+| `delays_data` | `(shop_code, delay_from DESC)` | Most common dashboard query |
+| `eqpt_master` | `(shop_code)` | Equipment reference lookups |
+| `profiles` | `(emp_no)` | Login identifier lookup |
+| `user_roles` | `(user_id)` | Role/permission check |
+
+### Connection Pooling
+
+- **Supabase**: Built-in pgBouncer connection pooling at `SUPABASE_URL` (port 6543).
+  The app uses a single client per request (created via `@supabase/supabase-js`),
+  so each request opens one connection. For high concurrency, enable Supabase's
+  connection pooler in **Project Settings → Database → Connection pooling**.
+
+- **Self-hosted PostgreSQL**: Add pgBouncer or Pgcat in front of your database.
+  Connect via the pooler port, and set pool mode to `transaction`.
+
+### Caching
+
+- **TanStack React Query** caches all client-side data fetches. Default stale time
+  is 0 (refetch on mount). Add `staleTime` to query options for less-frequent
+  refreshes:
+  ```ts
+  useQuery({ queryKey: ["eqpt_master"], queryFn: ..., staleTime: 60_000 })
+  ```
+
+- **Nitro server** respects `Cache-Control` headers. Add CDN caching at the
+  proxy layer (Vercel Edge / Cloudflare / Render's built-in CDN).
+
+- For API routes, set cache headers in your server functions:
+  ```ts
+  headers: { "Cache-Control": "public, max-age=60, s-maxage=300" }
+  ```
+
+### Scaling
+
+- **Database**: Scale up Supabase compute add-on or use read replicas
+- **Compute**: Horizontal scaling via Render's plan upgrade or Vercel's
+  Pro/Enterprise
+- **Stateless**: The app has no in-memory state — multiple instances can run
+  behind a load balancer
+
+---
+
+## 8. Production Checklist
+
+Before going live (tick each — the app is NOT ready until ALL are checked):
+
+- [ ] **Supabase project created** and `setup.sql` applied
+- [ ] **.env** has real values (not placeholders) for all variables
+- [ ] **First admin user** created (seed endpoint or dashboard)
+- [ ] **Local dev** boots without errors — `npm run dev` → `http://localhost:3000`
+- [ ] **Production build** succeeds — `npm run build`
+- [ ] **GitHub repo** connected and pushed
+- [ ] **Vercel/Render** project connected to GitHub repo
+- [ ] **Environment variables** added to Vercel/Render dashboard
+- [ ] **NITRO_PRESET** set correctly (`node-server` for Render, omit for Vercel)
+- [ ] **App loads** at production URL — sign in works
+- [ ] **Deep links / refresh** don't 404 (try `/dashboard`, `/reports`)
+- [ ] **Custom domain** configured (optional)
+- [ ] **Google OAuth** configured (if needed)
+- [ ] **Supabase RLS policies** verified — test a dept_user can't edit other rows
+- [ ] **No Lovable branding** — verify production HTML has no badges/watermarks
+- [ ] **Analytics/telemetry** disabled — `reportLovableError` is no-op in PROD
+
+---
+
+## 9. Health Endpoint
+
+The app exposes a health check at `GET /api/health` for monitoring and load-balancer
+health probes:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-06-15T12:00:00Z",
+  "uptime": 12345,
+  "env": {
+    "supabase_configured": true,
+    "node_env": "production"
+  }
+}
+```
+
+Configure your hosting platform to use this as the health check path:
+- **Render**: Settings → Health Check Path → `/api/health`
+- **Vercel**: Monitoring → Custom health check → `/api/health`
+
+## 10. Security Headers
+
+The app includes these default security headers (set in `vite.config.ts`):
+
+| Header | Value |
+|---|---|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `X-XSS-Protection` | `1; mode=block` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+
+For production, add a full Content Security Policy at your reverse proxy/CDN layer.
+Example Cloudflare Workers / nginx snippet:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co;
+```
+
+## 11. Architecture Notes
+
+- **SSR**: All routes render on the server (Nitro). No SPA mode — deep links work.
+- **Auth**: Bearer token is attached to every `createServerFn` call via
+  `attachSupabaseAuth` middleware (`src/integrations/supabase/auth-attacher.ts`).
+- **Admin operations**: Use `supabaseAdmin` from `client.server.ts` (service role).
+  Never import this in client-side code.
+- **Error handling**: SSR errors render a clean error page (not a stack trace).
+  Client-side errors are logged to console only in production.

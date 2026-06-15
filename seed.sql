@@ -1,0 +1,36 @@
+-- ============================================================================
+--  RINL VIZAG STEEL — SEED: Create first admin user
+--  ============================================================================
+--  Run AFTER setup.sql.
+--
+--  NOTE: auth.users cannot be INSERTed directly on Supabase (managed schema).
+--  Use ONE of the methods below instead.
+--
+--  ── Method A: Use the app's seed endpoint (recommended) ───────────────────
+--  After deploying the app, run:
+--    curl -X POST https://<your-app>/api/public/seed \
+--      -H "Authorization: Bearer <YOUR_SEED_SECRET>"
+--  (Requires SEED_SECRET env var to be set in .env)
+--
+--  ── Method B: Supabase Dashboard ─────────────────────────────────────────
+--  1. Authentication → Users → Invite user
+--     Email: admin@vizagsteel.internal
+--     Password: (choose a strong password)
+--     Auto-confirm: ON
+--  2. After creation, copy the user's UUID from the Users table
+--  3. Run these SQL statements (replace <UUID> with the copied value):
+--     INSERT INTO public.profiles (id, emp_no, emp_name, dept, designation, active)
+--     VALUES ('<UUID>', 'ADMIN001', 'System Administrator', 'PPM', 'Admin', true);
+--
+--     INSERT INTO public.user_roles (user_id, role)
+--     VALUES ('<UUID>', 'sys_admin');
+--
+--  ── Method C: Supabase Management API (programmatic) ──────────────────────
+--  POST https://<project-ref>.supabase.co/auth/v1/admin/users
+--  Headers: { Authorization: "Bearer <service-role-key>", apikey: "<anon-key>" }
+--  Body: { email: "admin@vizagsteel.internal", password: "<password>", email_confirm: true }
+--  Then insert profile + role rows as in Method B step 3.
+-- ============================================================================
+
+-- This file is intentionally a SQL reference, not a runnable script.
+-- Run the instructions above to create your first admin user.
