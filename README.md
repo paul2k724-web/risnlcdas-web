@@ -180,8 +180,6 @@ npm run format
 
 The project is configured for Vercel and SSR deployment. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for deployment notes and [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for a deeper architecture walkthrough.
 
-For a deeper technical read, [docs/PROJECT_DEFENSE_GUIDE.md](docs/PROJECT_DEFENSE_GUIDE.md) has the interview-style summary.
-
 ## Notes
 
 - Use the Supabase environment variables from `.env.example`
